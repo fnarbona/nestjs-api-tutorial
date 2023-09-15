@@ -1,12 +1,16 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { AuthDto } from 'src/dto';
+import { AuthDto } from 'src/auth/dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as argon from 'argon2';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { JwtService } from '@nestjs/jwt';
 
-@Injectable({})
+@Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private jwt: JwtService,
+  ) {}
 
   async signup(dto: AuthDto) {
     // generate password hash
@@ -20,10 +24,11 @@ export class AuthService {
         },
       });
       // return saved user
-      delete user.hash;
-      return user;
+      return this.signToken(user.id, user.email);
     } catch (error) {
+      // prisma will throw error if email is already taken
       if (error instanceof PrismaClientKnownRequestError) {
+        // prisma error P2002 - Unique constraint failed
         if (error.code === 'P2002') {
           throw new ForbiddenException('Email already in use');
         }
@@ -46,7 +51,24 @@ export class AuthService {
     // if password incorrect, throw error
     if (!pwMatches) throw new ForbiddenException('Invalid email or password');
     // return user
-    delete user.hash;
-    return user;
+    return this.signToken(user.id, user.email);
+  }
+
+  async signToken(
+    userId: number,
+    email: string,
+  ): Promise<{ access_token: string }> {
+    // generate payload from user data
+    const payload = {
+      sub: userId,
+      email,
+    };
+    // generate token with payload, expiration time, and secret
+    const token = await this.jwt.signAsync(payload, {
+      expiresIn: process.env.JWT_EXPIRATION,
+      secret: process.env.JWT_SECRET,
+    });
+    // return token
+    return { access_token: token };
   }
 }
